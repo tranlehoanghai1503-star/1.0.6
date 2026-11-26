@@ -18,6 +18,7 @@ import net.minecraft.block.ChestBlock;
 import net.minecraft.client.gui.screen.DeathScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.ingame.GenericContainerScreen;
+import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -126,7 +127,7 @@ public class SellAxeModule extends Module {
 
     private final Setting<Boolean> autoTurtleShell = sgGeneral.add(new BoolSetting.Builder()
         .name("tu-doi-turtle-shell")
-        .description("Neu trong tui do co turtle shell va chua doi len dau thi tu doi.")
+        .description("Khi o non dang trong va co turtle shell trong tui do thi tu doi.")
         .defaultValue(true)
         .build()
     );
@@ -344,6 +345,7 @@ public class SellAxeModule extends Module {
     }
 
     private void releaseKeys() {
+        if (mc.options == null) return;
         mc.options.sneakKey.setPressed(false);
         mc.options.useKey.setPressed(false);
         mc.options.attackKey.setPressed(false);
@@ -538,12 +540,15 @@ public class SellAxeModule extends Module {
     }
 
     private void applyKeys() {
-        if (autoTurtleShell.get()) tryEquipTurtleShell();
+        boolean screenOpen = mc.currentScreen != null;
+        if (!screenOpen) {
+            if (autoTurtleShell.get()) tryEquipTurtleShell();
+            if (autoAxe.get() && !mc.player.getMainHandStack().isOf(Items.NETHERITE_AXE)) tryEquipAxe();
+            if (autoFood.get() && mc.player.getOffHandStack().isEmpty()) tryFillOffhand();
+        }
 
         boolean axe = mc.player.getMainHandStack().isOf(Items.NETHERITE_AXE);
-        if (!axe && autoAxe.get()) axe = tryEquipAxe();
         boolean offhand = !mc.player.getOffHandStack().isEmpty();
-        if (!offhand && autoFood.get()) offhand = tryFillOffhand();
         boolean sneakingOk = !sneak.get() || mc.player.isSneaking();
 
         holdingAxe = axe;
@@ -558,8 +563,8 @@ public class SellAxeModule extends Module {
         }
 
         mc.options.sneakKey.setPressed(sneak.get());
-        mc.options.useKey.setPressed(stage >= 2 && offhand && sneakingOk && mc.currentScreen == null);
-        mc.options.attackKey.setPressed(stage >= 3 && axe && mc.currentScreen == null);
+        mc.options.useKey.setPressed(stage >= 2 && offhand && sneakingOk && !screenOpen);
+        mc.options.attackKey.setPressed(stage >= 3 && axe && !screenOpen);
     }
 
     private void tryEquipTurtleShell() {
@@ -570,8 +575,8 @@ public class SellAxeModule extends Module {
         if (mc.interactionManager == null || mc.currentScreen != null) return;
 
         var handler = mc.player.playerScreenHandler;
-        int headSlot = 5; // Trong PlayerScreenHandler: 5 = head armor slot
-        if (handler.getSlot(headSlot).getStack().isOf(Items.TURTLE_HELMET)) return;
+        int headSlot = 5;
+        if (!handler.getSlot(headSlot).getStack().isEmpty()) return;
 
         for (int i = 9; i <= 44; i++) {
             if (!handler.getSlot(i).getStack().isOf(Items.TURTLE_HELMET)) continue;
@@ -580,11 +585,11 @@ public class SellAxeModule extends Module {
             if (!handler.getCursorStack().isEmpty()) {
                 mc.interactionManager.clickSlot(handler.syncId, i, 0, SlotActionType.PICKUP, mc.player);
             }
-            shellCooldown = 20;
+            shellCooldown = 100;
             info("Da doi turtle shell len dau.");
             return;
         }
-        shellCooldown = 40;
+        shellCooldown = 100;
     }
 
     private boolean tryEquipAxe() {
@@ -599,7 +604,7 @@ public class SellAxeModule extends Module {
         for (int slot = 36; slot <= 44; slot++) {
             if (!handler.getSlot(slot).getStack().isOf(Items.NETHERITE_AXE)) continue;
             InvUtils.swap(slot - 36, false);
-            axeCooldown = 10;
+            axeCooldown = 20;
             noAxeWarned = false;
             info("Dua netherite axe ra tay chinh (hotbar o " + (slot - 35) + ").");
             return mc.player.getMainHandStack().isOf(Items.NETHERITE_AXE);
@@ -617,13 +622,13 @@ public class SellAxeModule extends Module {
             }
             mc.interactionManager.clickSlot(handler.syncId, slot, hotbar, SlotActionType.SWAP, mc.player);
             InvUtils.swap(hotbar, false);
-            axeCooldown = 10;
+            axeCooldown = 20;
             noAxeWarned = false;
             info("Lay netherite axe tu tui do ra tay chinh (hotbar o " + (hotbar + 1) + ").");
             return mc.player.getMainHandStack().isOf(Items.NETHERITE_AXE);
         }
 
-        axeCooldown = 40;
+        axeCooldown = 60;
         if (!noAxeWarned) {
             noAxeWarned = true;
             warning("Khong co netherite axe trong hotbar va tui do.");
@@ -650,7 +655,7 @@ public class SellAxeModule extends Module {
             return true;
         }
 
-        foodCooldown = foodBuyer.isBusy() ? 5 : 40;
+        foodCooldown = foodBuyer.isBusy() ? 10 : 60;
         if (!noFoodWarned) {
             noFoodWarned = true;
             warning("Tay phu trong va khong con thuc an trong tui do.");
