@@ -217,6 +217,225 @@ public class SellAxeModule extends Module {
     private final Setting<Integer> idleSeconds = sgIdle.add(new IntSetting.Builder()
         .name("dung-yen-bao-lau-giay")
         .description("Dung yen bao nhieu giay thi /home.")
+        .defaultValue(120)package com.hai.selldonutsmp.modules;
+
+import com.hai.selldonutsmp.SellDonutSMPAddon;
+import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
+import meteordevelopment.meteorclient.events.game.GameLeftEvent;
+import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
+import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.render.Freecam;
+import meteordevelopment.meteorclient.utils.player.ChatUtils;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.orbit.EventHandler;
+import meteordevelopment.orbit.EventPriority;
+import net.minecraft.block.ChestBlock;
+import net.minecraft.client.gui.screen.DeathScreen;
+import net.minecraft.client.gui.screen.GameMenuScreen;
+import net.minecraft.client.gui.screen.ingame.GenericContainerScreen;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
+import net.minecraft.network.packet.s2c.play.GameMessageS2CPacket;
+import net.minecraft.network.packet.s2c.play.OverlayMessageS2CPacket;
+import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.text.Text;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.Vec3d;
+
+import java.util.Set;
+import java.util.regex.Pattern;
+
+public class SellAxeModule extends Module {
+    private static final Set<Item> BAD_FOOD = Set.of(
+        Items.ROTTEN_FLESH, Items.SPIDER_EYE, Items.PUFFERFISH, Items.POISONOUS_POTATO,
+        Items.CHORUS_FRUIT, Items.SUSPICIOUS_STEW, Items.CHICKEN,
+        Items.GOLDEN_APPLE, Items.ENCHANTED_GOLDEN_APPLE
+    );
+
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgDeath = settings.createGroup("Khi chet");
+    private final SettingGroup sgRestart = settings.createGroup("Khi restart region");
+    private final SettingGroup sgIdle = settings.createGroup("Chong dung yen");
+    private final SettingGroup sgFood = settings.createGroup("Mua do an");
+    private final FoodBuyer foodBuyer = new FoodBuyer(sgFood);
+
+    // ---------- Chung ----------
+    private final Setting<Boolean> sneak = sgGeneral.add(new BoolSetting.Builder()
+        .name("giu-sneak")
+        .description("Giu phim sneak o buoc dau tien.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> stepDelay = sgGeneral.add(new IntSetting.Builder()
+        .name("tre-moi-buoc-tick")
+        .description("Khoang cach giua cac buoc: nhin len (-90), giu chuot phai, giu chuot trai (10 tick = 0,5 giay).")
+        .defaultValue(10)
+        .min(1)
+        .sliderMax(40)
+        .build()
+    );
+
+    private final Setting<Integer> reconnectDelay = sgGeneral.add(new IntSetting.Builder()
+        .name("cho-sau-khi-vao-lai-giay")
+        .description("Sau khi vao lai server (hoac het restart region) tat bao nhieu giay roi moi chay lai.")
+        .defaultValue(5)
+        .min(0)
+        .sliderMax(30)
+        .build()
+    );
+
+    private final Setting<Boolean> homeOnStart = sgGeneral.add(new BoolSetting.Builder()
+        .name("tu-home-khi-bat")
+        .description("Moi lan bat SellAxe (hoac chay lai sau khi vao lai server) se tu go /home truoc khi bat dau.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<String> homeName = sgGeneral.add(new StringSetting.Builder()
+        .name("ten-home")
+        .description("Ten home dung cho moi lenh /home cua SellAxe (vi du: 1).")
+        .defaultValue("1")
+        .build()
+    );
+
+    private final Setting<Integer> homeWait = sgGeneral.add(new IntSetting.Builder()
+        .name("cho-sau-home-giay")
+        .description("Sau khi go /home, cho bao nhieu giay cho dich chuyen xong roi moi chay.")
+        .defaultValue(5)
+        .min(1)
+        .sliderMax(30)
+        .build()
+    );
+
+    private final Setting<Boolean> workInFreecam = sgGeneral.add(new BoolSetting.Builder()
+        .name("chay-khi-bat-freecam")
+        .description("Khi bat Freecam cua Meteor, SellAxe van chat/an theo huong nhin cua nhan vat (khong theo camera).")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> autoCloseGui = sgGeneral.add(new BoolSetting.Builder()
+        .name("tu-dong-dong-gui-ruong")
+        .description("Neu bat ngo mo giao dien ruong thi tu dong lai de khong bi ngat chuot trai.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> autoFood = sgGeneral.add(new BoolSetting.Builder()
+        .name("tu-chuyen-do-an-sang-tay-phu")
+        .description("Khi tay phu trong, quet toan bo tui do, thay thuc an thi dua sang tay phu de tiep tuc giu chuot phai.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> autoAxe = sgGeneral.add(new BoolSetting.Builder()
+        .name("tu-lay-netherite-axe-ra-tay-chinh")
+        .description("Khi tay chinh khong cam netherite axe, quet hotbar va tui do roi dua axe ra tay chinh.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> autoTurtleShell = sgGeneral.add(new BoolSetting.Builder()
+        .name("tu-doi-turtle-shell")
+        .description("Neu trong tui do co turtle shell va chua doi len dau thi tu doi.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> antiPause = sgGeneral.add(new BoolSetting.Builder()
+        .name("chong-tam-dung-khi-mat-focus")
+        .description("Tat che do tu tam dung khi cua so game mat focus va tu dong menu tam dung, de chuot trai khong bi ngat.")
+        .defaultValue(true)
+        .build()
+    );
+
+    // ---------- Khi chet ----------
+    private final Setting<Boolean> deathHandling = sgDeath.add(new BoolSetting.Builder()
+        .name("tu-xu-ly-khi-chet")
+        .description("Khi nhan vat chet (can bat AutoRespawn cua Meteor): tu /home roi tat va bat lai SellAxe.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> deathHomeDelay = sgDeath.add(new IntSetting.Builder()
+        .name("cho-home-sau-khi-chet-giay")
+        .description("Sau khi chet bao nhieu giay thi go /home (tinh tu luc chet).")
+        .defaultValue(5)
+        .min(1)
+        .sliderMax(30)
+        .build()
+    );
+
+    private final Setting<Integer> deathRestartDelay = sgDeath.add(new IntSetting.Builder()
+        .name("bat-lai-sau-home-giay")
+        .description("Sau khi go /home, SellAxe tat va bat lai sau bao nhieu giay.")
+        .defaultValue(3)
+        .min(1)
+        .sliderMax(30)
+        .build()
+    );
+
+    // ---------- Khi restart region ----------
+    private final Setting<String> restartBarRegex = sgRestart.add(new StringSetting.Builder()
+        .name("regex-dong-chu-hotbar")
+        .description("Regex nhan dong chu tren thanh hotbar khi server dang restart hoac xep hang.")
+        .defaultValue("(?i)(restart|updat|queue|position|slot|region|server)")
+        .build()
+    );
+
+    private final Setting<Integer> barGoneSeconds = sgRestart.add(new IntSetting.Builder()
+        .name("hotbar-mat-chu-giay")
+        .description("Dong chu tren hotbar bien mat lien tuc bao nhieu giay thi coi la restart xong.")
+        .defaultValue(3)
+        .min(1)
+        .sliderMax(15)
+        .build()
+    );
+
+    private final Setting<Integer> restartFallback = sgRestart.add(new IntSetting.Builder()
+        .name("cho-du-phong-giay")
+        .description("Neu khong thay dong chu nao tren hotbar thi cho bao nhieu giay roi chay lai.")
+        .defaultValue(30)
+        .min(5)
+        .sliderMax(120)
+        .build()
+    );
+
+    private final Setting<Integer> restartMaxWait = sgRestart.add(new IntSetting.Builder()
+        .name("cho-toi-da-giay")
+        .description("Cho toi da bao nhieu giay (phong khi dong chu khong bao gio mat).")
+        .defaultValue(600)
+        .min(30)
+        .sliderMax(1800)
+        .build()
+    );
+
+    private final Setting<Boolean> debug = sgRestart.add(new BoolSetting.Builder()
+        .name("go-loi-hotbar")
+        .description("In ra cac dong chu tren hotbar nhan duoc trong luc restart (de chinh regex).")
+        .defaultValue(false)
+        .build()
+    );
+
+    // ---------- Chong dung yen ----------
+    private final Setting<Boolean> autoHome = sgIdle.add(new BoolSetting.Builder()
+        .name("tu-home-khi-dung-yen")
+        .description("Dung yen qua lau thi tu /home.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> idleSeconds = sgIdle.add(new IntSetting.Builder()
+        .name("dung-yen-bao-lau-giay")
+        .description("Dung yen bao nhieu giay thi /home.")
         .defaultValue(120)
         .min(10)
         .sliderMax(600)
